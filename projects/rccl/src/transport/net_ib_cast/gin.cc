@@ -7,8 +7,20 @@
 
 #include "common_cast.h"
 
-#include "gin/gin_host.h"
+// RCCL: upstream NCCL pulls "gin/gin_host.h" here, which transitively
+// provides the GIN plugin ABI types (ncclGin_t, ncclGinConfig_v13_t, etc.).
+// RCCL doesn't carry the host-side GIN port yet, so we include the plugin
+// ABI header directly. When the GIN host-side port lands and ships
+// gin/gin_host.h, this can revert to the upstream include.
+#include "nccl_gin.h"
 #include "gin_cast.h"
+
+// RCCL fork-local: mirrors upstream nccl_device/net_device.h, which is not
+// yet present in RCCL. When the GIN host-side port adds NCCL_NET_DEVICE_GIN_PROXY
+// to net_device.h, this guard becomes inert and can be removed.
+#ifndef NCCL_NET_DEVICE_GIN_PROXY
+#define NCCL_NET_DEVICE_GIN_PROXY 2
+#endif
 
 const int NCCL_GIN_IB_ALLGATHER_TAG = 0xa0;
 const int NCCL_GIN_IB_ALLTOALL_TAG = 0xa1;
@@ -43,13 +55,14 @@ static ncclResult_t ncclGinIbGdrGpuSupport(bool gdaki) {
 #endif
   if (peerMemSupport) return ncclSuccess;
 
-  int cudaDev;
-  CUDACHECK(cudaGetDevice(&cudaDev));
-  int dmaBufSupportOnDevice = 1;
-  CUCHECK(cuDeviceGetAttribute(&dmaBufSupportOnDevice, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED, cudaDev));
-  if (dmaBufSupportOnDevice == 1) return ncclSuccess;
+  // RCCL/HIP: AMD does not expose a per-device DMA-BUF capability flag through
+  // the HIP runtime - the upstream cuDeviceGetAttribute(CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED)
+  // path has no HIP equivalent. Substitute the IB-device-level check, which
+  // exercises the actual ibv_reg_dmabuf_mr path GIN ends up using and is
+  // already used by the init-time sibling ncclGinIbGdrSupport() above.
+  if (IbCastDmaBufSupport(0) == ncclSuccess) return ncclSuccess;
 
-  WARN("Unable to use GIN: Peermem is not supported, and device %d does not support DMA-BUF.", cudaDev);
+  WARN("Unable to use GIN: Peermem is not supported, and DMA-BUF is not available.");
   return ncclInvalidUsage;
 }
 
