@@ -283,6 +283,20 @@ if(BUILD_TESTS)
       RegistrationMPITests.cpp
     )
 
+    # gin.cc is intentionally excluded from librccl.so (see
+    # src/transport/net_ib_cast/CMakeLists.txt) until the GIN host-side port
+    # lands src/include/plugin/nccl_gin.h. To exercise the IB-proxy backend
+    # in unit tests, compile gin.cc directly into the GIN MPI test binary
+    # using the test-scope shim at test/transport/GinMPI/include/nccl_gin.h.
+    # When the host-side port lands and ships nccl_gin.h in production scope,
+    # delete this block, delete the shim include directory, and re-enable
+    # gin.cc in net_ib_cast/CMakeLists.txt.
+    if(RCCL_HAS_GIN_IB_PROXY)
+      list(APPEND MPI_TEST_SOURCE_FILES
+        ${PROJECT_SOURCE_DIR}/src/transport/net_ib_cast/gin.cc
+      )
+    endif()
+
     add_executable(rccl-UnitTestsMPI ${MPI_TEST_SOURCE_FILES})
     list(APPEND RCCL_TEST_EXECUTABLES rccl-UnitTestsMPI)
   endif()
@@ -297,7 +311,25 @@ if(BUILD_TESTS)
       if(DEFINED ASAN_RUNTIME_DIR)
         target_link_options(${test_executable} PRIVATE "LINKER:-rpath,${ASAN_RUNTIME_DIR}")
       endif()
-    endif()                                                                                                                                                                     
+    endif()
+
+    # GIN MPI tests need:
+    # 1. Test-scope shim headers (nccl_gin.h, gin/gin_v13.h) that define the
+    #    GIN plugin ABI. These are placed BEFORE the production include path
+    #    so they take precedence over any (eventual) production nccl_gin.h.
+    #    They will be deleted once the GIN host-side port adds the real
+    #    headers in src/include/plugin/.
+    # 2. RCCL's private INCLUDE_DIRECTORIES so gin.cc and the test fixture
+    #    can resolve common_cast.h, ibvwrap.h, and the rest of the net_ib_cast
+    #    transport machinery (all hipified into the build tree).
+    if(ENABLE_MPI_TESTS AND RCCL_HAS_GIN_IB_PROXY AND "${test_executable}" STREQUAL "rccl-UnitTestsMPI")
+      target_include_directories(${test_executable} BEFORE PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/transport/GinMPI/include
+      )
+      target_include_directories(${test_executable} PRIVATE
+        $<TARGET_PROPERTY:rccl,INCLUDE_DIRECTORIES>
+      )
+    endif()
 
     # Add MPI-specific configuration if MPI tests are enabled
     if(ENABLE_MPI_TESTS)
