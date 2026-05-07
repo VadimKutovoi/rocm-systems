@@ -15,13 +15,6 @@
 #include "nccl_gin.h"
 #include "gin_cast.h"
 
-// RCCL fork-local: mirrors upstream nccl_device/net_device.h, which is not
-// yet present in RCCL. When the GIN host-side port adds NCCL_NET_DEVICE_GIN_PROXY
-// to net_device.h, this guard becomes inert and can be removed.
-#ifndef NCCL_NET_DEVICE_GIN_PROXY
-#define NCCL_NET_DEVICE_GIN_PROXY 2
-#endif
-
 const int NCCL_GIN_IB_ALLGATHER_TAG = 0xa0;
 const int NCCL_GIN_IB_ALLTOALL_TAG = 0xa1;
 
