@@ -27,7 +27,8 @@ static ncclResult_t IbCastResiliencyCheckErrorNotFatal(struct ncclIbResiliency* 
   const char* failureReason = NULL;
   for (int i = 0; i < resCtx->ndevs; i++) {
     enum ncclIbResiliencyDevState devState = resCtx->devs[i].state.load(std::memory_order_acquire);
-    if (i == devIndex || devState != ncclIbResiliencyDevStateOk) {
+    bool devOk = devState == ncclIbResiliencyDevStateOk || devState == ncclIbResiliencyDevStateRecovered;
+    if (i == devIndex || !devOk) {
       nFailedDevices++;
     }
   }
@@ -90,7 +91,7 @@ static ncclResult_t IbCastResiliencyReplaceQps(struct ncclIbResiliency* resCtx, 
       // Check if the new QP is on a functional device
       newDevIndex = resCtx->baseComm->qps[newQpIndex].devIndex;
       newDevState = resCtx->devs[newDevIndex].state.load(std::memory_order_acquire);
-      if (newDevState != ncclIbResiliencyDevStateOk) {
+      if (newDevState != ncclIbResiliencyDevStateOk && newDevState != ncclIbResiliencyDevStateRecovered) {
         offset++;
         WARN("NET/IB: %s: Cannot replace QP with qpIndex=%d because the new QP (qpIndex=%d, devIndex=%d) is not on a functional device (state=%d)", __func__, failedQpIndex, newQpIndex, newDevIndex, newDevState);
         continue;
@@ -323,7 +324,7 @@ static ncclResult_t IbCastResiliencyHandleCompletionErrorSender(struct ncclIbRes
 static ncclResult_t IbCastResiliencyHandleDeviceFailure(struct ncclIbResiliency* resCtx, int devIndex) {
   ncclResult_t res = ncclSuccess;
   enum ncclIbResiliencyDevState devState = resCtx->devs[devIndex].state.load(std::memory_order_acquire);
-  if (devState == ncclIbResiliencyDevStateOk) {
+  if (devState == ncclIbResiliencyDevStateOk || devState == ncclIbResiliencyDevStateRecovered) {
     WARN("NET/IB: %s: Device %d marked as failed. Initiating recovery? %s (%s comm=%p, outstandingRecovery=%d)", __func__, devIndex, resCtx->recoveryEnabled ? "Yes" : "No", resCtx->baseComm->isSend ? "send" : "recv", resCtx->baseComm, resCtx->outstandingRecovery);
     resCtx->devs[devIndex].state.store(ncclIbResiliencyDevStateError, std::memory_order_release);
     NCCLCHECK(IbCastResiliencyReplaceQps(resCtx, devIndex));
@@ -416,7 +417,7 @@ static ncclResult_t IbCastResiliencyProbePost(struct ncclIbResiliencySend* sendR
   int devIndex = 0;
   for (devIndex = 0; devIndex < sendResCtx->base.ndevs; devIndex++) {
     enum ncclIbResiliencyDevState devState = sendResCtx->base.devs[devIndex].state.load(std::memory_order_acquire);
-    if (devState == ncclIbResiliencyDevStateOk) {
+    if (devState == ncclIbResiliencyDevStateOk || devState == ncclIbResiliencyDevStateRecovered) {
       // This device is functional. Use it to post the probe.
       break;
     }
@@ -1001,7 +1002,8 @@ ncclResult_t IbCastResiliencyProgress(struct ncclIbResiliency* resCtx) {
         resCtx->outstandingRecovery--;
         INFO(NCCL_NET, "NET/IB: %s: Device %d has been recovered for resiliency context (%s comm=%p, outstandingRecovery=%d)", __func__, devIndex, resCtx->baseComm->isSend ? "send" : "recv", resCtx->baseComm, resCtx->outstandingRecovery);
         IbCastResiliencyActiveQpsRestore(resCtx, devIndex);
-        resCtx->devs[devIndex].state.store(ncclIbResiliencyDevStateOk, std::memory_order_release);
+        // State stays Recovered — callers treat it as functional, and tests can
+        // observe the post-recovery state before the next operation resets it.
       }
       if (devState == ncclIbResiliencyDevStateRecoveryFailed) {
         resCtx->outstandingRecovery--;

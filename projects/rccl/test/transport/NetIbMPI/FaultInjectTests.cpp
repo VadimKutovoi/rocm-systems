@@ -1835,22 +1835,17 @@ TEST_F(NetIbMPITest, RecoverySuccessRestoresTraffic) {
             << "Phase 1: send should complete via surviving device after failover";
         EXPECT_EQ(fp.fatalCount, 0)
             << "Phase 1: no fatal error expected";
-        EXPECT_NE(fp.devState0AfterFailover, 0)
+        EXPECT_NE(fp.devState0AfterFailover, kDevStateOk)
             << "Phase 1: device 0 should not be Ok after failover";
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
-    // ── Phase 2: wait for recovery to restore devState[0] to Ok ─────────
-    // Recovery runs in a background thread with its own CQ and QPs — neither
-    // rank's main thread needs to poll during the handshake.
-    // ncclIbResiliencyDevStateOk = 0, ncclIbResiliencyDevStateRecovered = 4
-    // Recovery thread sets Recovered(4); main progress path promotes to Ok(0)
-    // during IbCastTest. Accept either as success.
+    // ── Phase 2: wait for recovery to restore devState[0] to Recovered ──────
     if (rank == 1) {
         struct ncclIbCastResiliencyState resState = {};
         for (int poll = 0; poll < kRecoveryPollIters; poll++) {
             ncclIbCastGetResiliencyState(sendComm, &resState);
-            if (resState.devState[0] == kDevStateOk || resState.devState[0] == kDevStateRecovered) break;
+            if (resState.devState[0] == kDevStateRecovered) break;
             usleep(10000);  // 10 ms
         }
         rp.devState0AfterRecovery = resState.devState[0];
@@ -1862,16 +1857,14 @@ TEST_F(NetIbMPITest, RecoverySuccessRestoresTraffic) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     // ── Phase 3: send 20 messages to verify sustained traffic on restored QPs ──
-    // Recovery assertion first
     if (rank == 0) {
-        EXPECT_TRUE(rp.devState0AfterRecovery == kDevStateOk || rp.devState0AfterRecovery == kDevStateRecovered)
+        EXPECT_EQ(rp.devState0AfterRecovery, kDevStateRecovered)
             << "Recovery did not restore device 0 within timeout; "
-            << "devState[0]=" << rp.devState0AfterRecovery
-            << " (expected Ok=0 or Recovered=4)";
+            << "devState[0]=" << rp.devState0AfterRecovery;
     }
 
     // Skip sustained traffic if recovery failed
-    if (rp.devState0AfterRecovery != kDevStateOk && rp.devState0AfterRecovery != kDevStateRecovered) {
+    if (rp.devState0AfterRecovery != kDevStateRecovered) {
         if (rank == 0) {
             ADD_FAILURE() << "Recovery did not succeed — skipping post-recovery traffic";
         }
@@ -1998,7 +1991,8 @@ TEST_F(NetIbMPITest, RecoveryPendingWhileLinkDown) {
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
-    // Only sender QP — receiver stays healthy (link-down simulation)
+    // Only sender QP — receiver stays healthy (link-down simulation).
+    // Recovery can't complete because receiver never detects the failure.
     if (rank == 1) {
         ASSERT_EQ(ncclIbCastFaultDriveQpToError(sendComm, 0), ncclSuccess);
     }
@@ -2240,7 +2234,7 @@ TEST_F(NetIbMPITest, RecoveryDeviceOneFailure) {
         struct ncclIbCastResiliencyState resState = {};
         for (int poll = 0; poll < kRecoveryPollIters; poll++) {
             ncclIbCastGetResiliencyState(sendComm, &resState);
-            if (resState.devState[1] == kDevStateOk || resState.devState[1] == kDevStateRecovered) break;
+            if (resState.devState[1] == kDevStateRecovered) break;
             usleep(10000);
         }
         devState1AfterRecovery = resState.devState[1];
@@ -2253,13 +2247,12 @@ TEST_F(NetIbMPITest, RecoveryDeviceOneFailure) {
 
     // ── Phase 3: send 20 messages to verify sustained traffic on restored QPs ──
     if (rank == 0) {
-        EXPECT_TRUE(devState1AfterRecovery == kDevStateOk || devState1AfterRecovery == kDevStateRecovered)
+        EXPECT_EQ(devState1AfterRecovery, kDevStateRecovered)
             << "Recovery did not restore device 1 within timeout; "
-            << "devState[1]=" << devState1AfterRecovery
-            << " (expected Ok=0 or Recovered=4)";
+            << "devState[1]=" << devState1AfterRecovery;
     }
 
-    if (devState1AfterRecovery != kDevStateOk && devState1AfterRecovery != kDevStateRecovered) {
+    if (devState1AfterRecovery != kDevStateRecovered) {
         if (rank == 0) {
             ADD_FAILURE() << "Recovery did not succeed — skipping post-recovery traffic";
         }
