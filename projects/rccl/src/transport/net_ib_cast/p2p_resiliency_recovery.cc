@@ -631,12 +631,10 @@ static inline ncclResult_t IbCastPortRecoveryQpsDestroyAndCreate(ncclIbPortRecov
     NCCLCHECK(wrap_ibv_destroy_qp(localQp->qp));
     localQp->qp = NULL;
 
-    // Recreate using attrs built from comm context.
-    // Skip ionic-specific QP creation (UDMA mask, GDA) — the ionic driver
-    // doesn't support recreating QPs with these settings after destroy.
     struct ncclIbQpCreateAttr createAttr;
     IbCastBuildDataQpCreateAttr(recoveryContext->resCtx->baseComm, recoveryContext->devIndex, &createAttr);
-    createAttr.skipIonic = true;
+    createAttr.channelId = localQp->channelId;
+    createAttr.isDataQp = localQp->isDataQp;
     NCCLCHECK(IbCastQpCreate(localQp, &createAttr));
 
     INFO(NCCL_NET, "NET/IB: %s: Recreated QP %d on device %d (comm=%p, old_qp_num=%u, new_qp_num=%u)",
@@ -669,7 +667,8 @@ static inline ncclResult_t IbCastPortRecoveryQpsDestroyAndCreate(ncclIbPortRecov
         IbCastBuildDataQpCreateAttr(recoveryContext->resCtx->baseComm, recoveryContext->devIndex, &flushCreateAttr);
         flushCreateAttr.maxRecvWorkRequest = 0;
         flushCreateAttr.maxSendWorkRequest = 1;
-        flushCreateAttr.skipIonic = true;
+        flushCreateAttr.channelId = flushQp->channelId;
+        flushCreateAttr.isDataQp = flushQp->isDataQp;
         NCCLCHECK(IbCastQpCreate(flushQp, &flushCreateAttr));
         INFO(NCCL_NET, "NET/IB: %s: Recreated Flush QP on device %d (comm=%p, new_qp_num=%u)",
              __func__, i, recoveryContext->resCtx->baseComm, flushQp->qp->qp_num);

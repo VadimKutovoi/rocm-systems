@@ -469,7 +469,7 @@ ncclResult_t IbCastQpCreate(struct ncclIbQp* qp, struct ncclIbQpCreateAttr* crea
      NCCLCHECK(ncclIbCreateQpMlx5(createQpAttrs, qp));
      return ncclSuccess;
   }
-  if (IbCastAinicRoce && createQpAttrs->type != IBV_QPT_UD && !createQpAttrs->skipIonic) {
+  if (IbCastAinicRoce && createQpAttrs->type != IBV_QPT_UD) {
     NCCLCHECK(ncclIbCreateQpIonic(createQpAttrs, qp));
     return ncclSuccess;
   }
@@ -661,6 +661,8 @@ static ncclResult_t IbCastSenderQpsCreate(ncclIbSendComm* comm, struct ncclIbCon
         commDev->base.pd,
         qpCreateAttrs.oooRq);
     localQp->devIndex = devIndex;
+    localQp->channelId = channelId;
+    localQp->isDataQp = qpCreateAttrs.isDataQp;
 
     // Populate the metadata that will be delivered to the remote peer
     localQpInfo->qpn      = localQp->qp->qp_num;
@@ -1141,6 +1143,8 @@ static ncclResult_t IbCastReceiverQpsCreateToRts(ncclIbRecvComm* rComm, struct n
       }
     }
     NCCLCHECK(IbCastQpCreate(localQp, &qpCreateAttrs));
+    localQp->channelId = channelId;
+    localQp->isDataQp = qpCreateAttrs.isDataQp;
 
     INFO(NCCL_NET, "NET/IB: %s: QP created: port=%d dev=%d devName=%s ndevs=%d nmdevs=%d qp_num=%u pkey=%u pd=%p oooRq=%d",
         __func__,
@@ -1229,6 +1233,8 @@ static ncclResult_t IbCastReceiverQpsCreateToRts(ncclIbRecvComm* rComm, struct n
       qpCreateAttrs.ibDevN = rCommDev->base.ibDevN;
 
       NCCLCHECK(IbCastQpCreate(&rCommDev->gpuFlush.qp, &qpCreateAttrs));
+      rCommDev->gpuFlush.qp.channelId = channelId;
+      rCommDev->gpuFlush.qp.isDataQp = qpCreateAttrs.isDataQp;
 
       INFO(NCCL_NET, "NET/IB: %s: Flush QP created: port=%d dev=%d devName=%s ndevs=%d nmdevs=%d qp_num=%u pkey=%u pd=%p",
           __func__,

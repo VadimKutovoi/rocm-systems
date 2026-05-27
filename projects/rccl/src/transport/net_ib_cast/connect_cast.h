@@ -24,7 +24,6 @@ struct ncclIbQpCreateAttr {
   int8_t ctsQpSlot;
   int channelId;
   int ibDevN;
-  bool skipIonic;
 };
 
 // Per-QP connection metatdata
