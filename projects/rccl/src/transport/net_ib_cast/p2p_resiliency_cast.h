@@ -45,6 +45,10 @@ struct ncclIbResiliencyDev {
   // Extended to 128 bytes to hold GRH (40) + QPN payload for AINIC recovery.
   uint8_t portRecoveryGrhBuf[128];
   struct ibv_mr* portRecoveryGrhMr;
+  // Number of times this device completed recovery (Recovered → Ok).
+  // Monotonically increasing; used by tests to verify recovery without
+  // depending on devState timing.
+  int recoveryCount;
   // MR for QPN send buffer, registered against this device's PD.
   struct ibv_mr* portRecoveryQpnMr;
 };
