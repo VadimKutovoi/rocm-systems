@@ -1099,6 +1099,9 @@ qp_sharing_skip_sender:
     IbCastStripPort(&peerAddr);
 
     int nqps = comm->base.nqps;
+    struct IbCastSharedQp* registered[NCCL_IB_MAX_QPS];
+    int nRegistered = 0;
+    bool poolExhausted = false;
     for (int q = 0; q < nqps; q++) {
       IbCastSharedQpKey key;
       memset(&key, 0, sizeof(key));
@@ -1114,12 +1117,32 @@ qp_sharing_skip_sender:
       struct IbCastSharedQp* entry = IbCastRegisterSharedQp(&key,
           comm->base.qps[q].qp, comm->devs[devIdx].base.cq,
           comm->devs[devIdx].base.ibDevN, comm->base.qps[q].devIndex, 1);
-      if (entry && q == 0) {
+      if (entry == NULL) {
+        poolExhausted = true;
+        break;
+      }
+      registered[nRegistered++] = entry;
+      if (q == 0) {
         entry->cqRefcount = 1;
       }
-      if (entry) {
-        entry->ctsQpSlot = comm->base.qps[q].ctsQpSlot;
+      entry->ctsQpSlot = comm->base.qps[q].ctsQpSlot;
+    }
+
+    if (poolExhausted) {
+      // Undo the qpIdx entries already registered for this group, then fall
+      // back to unshared: commId=0 routes this comm's teardown through the
+      // ordinary non-shared close path, which already destroys these QPs and
+      // releases their CQ/PD -- no other cleanup needed here.
+      WARN("NET/IB: %s: QP sharing PRIMARY sender commId=%u group=%d: shared-QP pool exhausted "
+           "mid-registration, falling back to unshared for this comm",
+           __func__, comm->base.commId, comm->base.sharedGroupIdx);
+      for (int r = 0; r < nRegistered; r++) {
+        IbCastUnregisterSharedQp(registered[r]);
       }
+      IbCastFreeCommId(comm->base.commId);
+      comm->base.commId = 0;
+      comm->base.sharedGroupIdx = -1;
+      comm->base.isSharedQpPrimary = false;
     }
   }
 
@@ -1941,6 +1964,9 @@ qp_sharing_skip_recv:
     recvKey.groupIdx = rComm->base.sharedGroupIdx;
 
     int nqps = rComm->base.nqps;
+    struct IbCastSharedQp* registered[NCCL_IB_MAX_QPS];
+    int nRegistered = 0;
+    bool poolExhausted = false;
     for (int q = 0; q < nqps; q++) {
       recvKey.ibDevN = rComm->base.vProps.devs[q % rComm->base.vProps.ndevs];
       recvKey.qpIdx = q;
@@ -1949,16 +1975,38 @@ qp_sharing_skip_recv:
       struct IbCastSharedQp* entry = IbCastRegisterSharedQp(&recvKey,
           rComm->base.qps[q].qp, rComm->devs[devIdx].base.cq,
           rComm->devs[devIdx].base.ibDevN, rComm->base.qps[q].devIndex, 1);
-      if (entry) {
-        entry->ctsQpSlot = rComm->base.qps[q].ctsQpSlot;
-        if (q == 0) {
-          entry->cqRefcount = 1;
-        }
+      if (entry == NULL) {
+        poolExhausted = true;
+        break;
+      }
+      registered[nRegistered++] = entry;
+      entry->ctsQpSlot = rComm->base.qps[q].ctsQpSlot;
+      if (q == 0) {
+        entry->cqRefcount = 1;
       }
     }
 
+    if (poolExhausted) {
+      // Undo the qpIdx entries already registered for this group, then fall
+      // back to unshared: commId=0 routes this comm's teardown through the
+      // ordinary non-shared close path, which already destroys these QPs and
+      // releases their CQ/PD -- no other cleanup needed here. Skip flush-QP
+      // registration below: the data-QP group this flush QP would belong to
+      // no longer exists.
+      WARN("NET/IB: %s: QP sharing PRIMARY receiver commId=%u group=%d: shared-QP pool exhausted "
+           "mid-registration, falling back to unshared for this comm",
+           __func__, rComm->base.commId, rComm->base.sharedGroupIdx);
+      for (int r = 0; r < nRegistered; r++) {
+        IbCastUnregisterSharedQp(registered[r]);
+      }
+      IbCastFreeCommId(rComm->base.commId);
+      rComm->base.commId = 0;
+      rComm->base.sharedGroupIdx = -1;
+      rComm->base.isSharedQpPrimary = false;
+    }
+
     // Register flush QPs in shared pool (primary only)
-    if (rComm->flushEnabled) {
+    if (!poolExhausted && rComm->flushEnabled) {
       for (int i = 0; i < rComm->base.vProps.ndevs; i++) {
         IbCastSharedQpKey flushKey;
         memset(&flushKey, 0, sizeof(flushKey));
@@ -2253,10 +2301,12 @@ ncclResult_t IbCastCloseRecv(void* recvComm) {
                      flushSlot->qp->qp_num, flushSlot->key.groupIdx);
                 wrap_ibv_destroy_qp(flushSlot->qp);
                 flushSlot->qp = NULL;
-                flushSlot->used = false;
+                IbCastUnregisterSharedQpLocked(flushSlot);  // caller holds g_IbCastSharedQpMutex
               }
             } else {
-              // Not in pool (shouldn't happen), destroy directly
+              // Not in pool -- e.g. registration hit the pool-exhaustion
+              // fallback (IbCastRegisterSharedQp returned NULL); this comm's
+              // flush QP was never pool-tracked, so just destroy it directly.
               NCCLCHECK(wrap_ibv_destroy_qp(commDev->gpuFlush.qp.qp));
             }
             commDev->gpuFlush.qp.qp = NULL;

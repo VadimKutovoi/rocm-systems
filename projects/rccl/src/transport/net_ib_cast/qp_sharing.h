@@ -63,6 +63,8 @@ struct IbCastCommTableEntry {
 // Pool and comm table globals (defined in qp_sharing.cc)
 extern struct IbCastSharedQp       g_IbCastSharedQpPool[IBCAST_MAX_SHARED_QPS];
 extern int                         g_IbCastSharedQpPoolCount;
+extern int                         g_IbCastSharedQpFreeStack[IBCAST_MAX_SHARED_QPS];
+extern int                         g_IbCastSharedQpFreeTop;
 extern struct IbCastCommTableEntry g_IbCastCommTable[IBCAST_MAX_COMMS];
 extern uint16_t                    g_IbCastNextCommId;
 extern uint16_t                    g_IbCastCommIdFreeStack[IBCAST_MAX_COMMS];
@@ -85,6 +87,19 @@ struct IbCastSharedQp* IbCastFindSharedQpByQpn(uint32_t qpn, bool isSend);
 struct IbCastSharedQp* IbCastRegisterSharedQp(const IbCastSharedQpKey* key,
     struct ibv_qp* qp, struct ibv_cq* primaryCq,
     int primaryIbDevN, int devIndex, int initialRefcount);
+
+// Undo a registration -- either a partial registration attempt being rolled
+// back (a later qpIdx in the same group failed to register), or a slot whose
+// last user is closing outside of IbCastCleanupGroupCqs (the flush-QP path).
+// Does not touch the underlying QP/CQ -- ownership stays with the comm, which
+// tears them down itself (directly, or via the normal non-shared close path).
+
+// Self-locking variant for callers that do NOT already hold the mutex
+// (e.g. the connect/accept registration-rollback paths).
+void IbCastUnregisterSharedQp(struct IbCastSharedQp* entry);
+
+// Caller MUST hold g_IbCastSharedQpMutex (teardown paths).
+void IbCastUnregisterSharedQpLocked(struct IbCastSharedQp* entry);
 
 // Count QP slots registered by the primary for a given group
 int IbCastCountGroupQpSlots(const union ncclSocketAddress* peerAddr,
