@@ -887,6 +887,23 @@ protected:
             struct ncclIbQpSharingState st = GetActualQpSharingState(comms[i]);
             const int g = places[i].group;
 
+            if (g < 0) {
+                // Capacity-limited fallback (ISSUE-1): the model predicted this
+                // comm's group was already at its admission-check capacity, so
+                // the transport must have degraded it to an independent,
+                // unshared connection -- same shape as sharing being disabled
+                // for it entirely.
+                EXPECT_EQ(st.sharedGroupIdx, -1)
+                    << stage << ": conn " << i << " was expected to fall back "
+                    << "to unshared (group at capacity) but is tracked in group "
+                    << st.sharedGroupIdx;
+                EXPECT_EQ(st.commId, 0)
+                    << stage << ": conn " << i << " was expected to fall back "
+                    << "to unshared (group at capacity) but still holds commId "
+                    << st.commId;
+                continue;
+            }
+
             EXPECT_EQ(st.sharedGroupIdx, g)
                 << stage << ": conn " << i << " group mismatch";
             EXPECT_EQ(st.isSharedQpPrimary, places[i].primary)

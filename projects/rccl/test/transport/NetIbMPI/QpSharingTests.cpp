@@ -139,7 +139,7 @@ TEST_F(NetIbMPITest, QpShareAlgoLayoutSweep) {
     QpShareConns    cs;
 
     for (int c = 0; c < target; c++) {
-        QpShareRefModel::Placement p = model.AssignOnCreate();
+        QpShareRefModel::Placement p = model.AssignOnCreate(QpShareEnvDepthMultiplier());
         void* l = nullptr; void* s = nullptr; void* r = nullptr;
         if (!TryCastConnection(/*dev=*/0, &l, &s, &r)) {
             model.Release(p);
@@ -212,7 +212,7 @@ TEST_F(NetIbMPITest, QpShareAlgoChurnLayout) {
         const bool create = cs.size() == 0 ||
                             (static_cast<int>(cs.size()) < maxLive && (step % 3) != 2);
         if (create) {
-            QpShareRefModel::Placement p = model.AssignOnCreate();
+            QpShareRefModel::Placement p = model.AssignOnCreate(QpShareEnvDepthMultiplier());
             void* l = nullptr; void* s = nullptr; void* r = nullptr;
             if (!TryCastConnection(/*dev=*/0, &l, &s, &r)) {
                 model.Release(p);
@@ -315,7 +315,7 @@ TEST_F(NetIbMPITest, QpShareDataAllConnsTransfer) {
     QpShareConns    cs;
 
     for (int c = 0; c < nconns; c++) {
-        QpShareRefModel::Placement p = model.AssignOnCreate();
+        QpShareRefModel::Placement p = model.AssignOnCreate(QpShareEnvDepthMultiplier());
         void* l = nullptr; void* s = nullptr; void* r = nullptr;
         if (!TryCastConnection(/*dev=*/0, &l, &s, &r)) {
             model.Release(p);
@@ -412,7 +412,7 @@ TEST_F(NetIbMPITest, QpShareDataUnsharedGroups) {
     QpShareConns    cs;
 
     for (int c = 0; c < nconns; c++) {
-        QpShareRefModel::Placement p = model.AssignOnCreate();
+        QpShareRefModel::Placement p = model.AssignOnCreate(QpShareEnvDepthMultiplier());
         void* l = nullptr; void* s = nullptr; void* r = nullptr;
         if (!TryCastConnection(/*dev=*/0, &l, &s, &r)) {
             model.Release(p);
@@ -507,7 +507,7 @@ TEST_F(NetIbMPITest, QpShareDataFlushRouting) {
     QpShareRefModel model(ngroups);
     QpShareConns    cs;
     for (int c = 0; c < nconns; c++) {
-        QpShareRefModel::Placement p = model.AssignOnCreate();
+        QpShareRefModel::Placement p = model.AssignOnCreate(QpShareEnvDepthMultiplier());
         void* l = nullptr; void* s = nullptr; void* r = nullptr;
         if (!TryCastConnection(/*dev=*/0, &l, &s, &r)) {
             model.Release(p);
@@ -655,7 +655,7 @@ TEST_F(NetIbMPITest, QpShareStressManyConns) {
     QpShareRefModel model(ngroups);
     QpShareConns    cs;
     for (int c = 0; c < nconns; c++) {
-        QpShareRefModel::Placement p = model.AssignOnCreate();
+        QpShareRefModel::Placement p = model.AssignOnCreate(QpShareEnvDepthMultiplier());
         void* l = nullptr; void* s = nullptr; void* r = nullptr;
         if (!TryCastConnection(/*dev=*/0, &l, &s, &r)) {
             model.Release(p);
@@ -748,7 +748,7 @@ TEST_F(NetIbMPITest, QpShareStressSharedRqSaturation) {
     QpShareRefModel model(ngroups);
     QpShareConns    cs;
     for (int c = 0; c < nconns; c++) {
-        QpShareRefModel::Placement p = model.AssignOnCreate();
+        QpShareRefModel::Placement p = model.AssignOnCreate(QpShareEnvDepthMultiplier());
         void* l = nullptr; void* s = nullptr; void* r = nullptr;
         if (!TryCastConnection(/*dev=*/0, &l, &s, &r)) {
             model.Release(p);
@@ -1034,7 +1034,7 @@ TEST_F(NetIbMPITest, QpShareStressBatchCreateDestroy) {
         std::vector<void*> mhandles;
 
         for (int c = 0; c < perBatch; c++) {
-            QpShareRefModel::Placement p = model.AssignOnCreate();
+            QpShareRefModel::Placement p = model.AssignOnCreate(QpShareEnvDepthMultiplier());
             void* l = nullptr; void* s = nullptr; void* r = nullptr;
             if (!TryCastConnection(/*dev=*/0, &l, &s, &r)) {
                 model.Release(p);

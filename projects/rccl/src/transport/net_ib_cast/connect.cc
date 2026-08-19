@@ -1035,6 +1035,8 @@ ib_recv_dev_list:
       key.groupIdx = groupIdx;
 
       int nqps = comm->base.nqps;
+      struct IbCastSharedQp* joined[NCCL_IB_MAX_QPS];
+      int nJoined = 0;
       for (int q = 0; q < nqps; q++) {
         int mappedQP = q % primaryNqps;
         key.ibDevN = comm->base.vProps.devs[mappedQP % comm->base.vProps.ndevs];
@@ -1051,6 +1053,20 @@ ib_recv_dev_list:
           goto qp_sharing_skip_sender;
         }
 
+        if (!IbCastTryJoinSharedQp(slot)) {
+          WARN("NET/IB: %s: QP sharing SECONDARY sender commId=%u group=%d: shared QP qpIdx=%d at "
+               "capacity (%d), falling back to unshared for this comm",
+               __func__, comm->base.commId, groupIdx, mappedQP, slot->capacityUnits);
+          for (int r = 0; r < nJoined; r++) {
+            IbCastLeaveSharedQp(joined[r]);
+          }
+          IbCastFreeCommId(comm->base.commId);
+          comm->base.commId = 0;
+          comm->base.sharedGroupIdx = -1;
+          goto qp_sharing_skip_sender;
+        }
+        joined[nJoined++] = slot;
+
         // Copy QP info from shared pool to this comm
         comm->base.qps[q].qp = slot->qp;
         comm->base.qps[q].devIndex = slot->devIndex;
@@ -1060,8 +1076,6 @@ ib_recv_dev_list:
         // Populate metadata with shared QP info
         meta.qpInfo[q].qpn = slot->qp->qp_num;
         meta.qpInfo[q].devIndex = slot->devIndex;
-
-        slot->refcount++;
       }
 
       // Redirect CQs: destroy per-comm CQs and point to primary's CQs
@@ -1122,7 +1136,7 @@ qp_sharing_skip_sender:
       int devIdx = q % comm->base.vProps.ndevs;
       struct IbCastSharedQp* entry = IbCastRegisterSharedQp(&key,
           comm->base.qps[q].qp, comm->devs[devIdx].base.cq,
-          comm->devs[devIdx].base.ibDevN, comm->base.qps[q].devIndex, 1);
+          comm->devs[devIdx].base.ibDevN, comm->base.qps[q].devIndex, 1, depthMult);
       if (entry == NULL) {
         poolExhausted = true;
         break;
@@ -1870,6 +1884,8 @@ ib_recv:
       recvKey.groupIdx = recvGroupIdx;
 
       int nqps = rComm->base.nqps;
+      struct IbCastSharedQp* joined[NCCL_IB_MAX_QPS];
+      int nJoined = 0;
       for (int q = 0; q < nqps; q++) {
 		int mappedQ = q % primaryNqps;
 		int localDevIdx = mappedQ % rComm->base.vProps.ndevs;
@@ -1886,6 +1902,20 @@ ib_recv:
           goto qp_sharing_skip_recv;
         }
 
+        if (!IbCastTryJoinSharedQp(recvSlot)) {
+          WARN("NET/IB: %s: QP sharing SECONDARY recv commId=%u group=%d: shared QP qpIdx=%d at "
+               "capacity (%d), falling back to unshared for this comm",
+               __func__, rComm->base.commId, recvGroupIdx, mappedQ, recvSlot->capacityUnits);
+          for (int r = 0; r < nJoined; r++) {
+            IbCastLeaveSharedQp(joined[r]);
+          }
+          IbCastFreeCommId(rComm->base.commId);
+          rComm->base.commId = 0;
+          rComm->base.sharedGroupIdx = -1;
+          goto qp_sharing_skip_recv;
+        }
+        joined[nJoined++] = recvSlot;
+
         rComm->base.qps[q].qp = recvSlot->qp;
         rComm->base.qps[q].devIndex = recvSlot->devIndex;
         rComm->base.qps[q].ctsQpSlot = recvSlot->ctsQpSlot;
@@ -1896,8 +1926,6 @@ ib_recv:
 
         meta.qpInfo[q].qpn = recvSlot->qp->qp_num;
         meta.qpInfo[q].devIndex = recvSlot->devIndex;
-
-        recvSlot->refcount++;
       }
 
       // Redirect CQs
@@ -1980,7 +2008,7 @@ qp_sharing_skip_recv:
       int devIdx = q % rComm->base.vProps.ndevs;
       struct IbCastSharedQp* entry = IbCastRegisterSharedQp(&recvKey,
           rComm->base.qps[q].qp, rComm->devs[devIdx].base.cq,
-          rComm->devs[devIdx].base.ibDevN, rComm->base.qps[q].devIndex, 1);
+          rComm->devs[devIdx].base.ibDevN, rComm->base.qps[q].devIndex, 1, recvDepthMult);
       if (entry == NULL) {
         poolExhausted = true;
         break;
@@ -2023,8 +2051,14 @@ qp_sharing_skip_recv:
         flushKey.groupIdx = rComm->base.sharedGroupIdx;
         flushKey.qpIdx = IBCAST_FLUSH_QP_IDX;
 
+        // Flush QPs are a low-rate coordination path with a fixed depth-1
+        // WR budget (connect.cc gpuFlush setup) independent of
+        // RCCL_IB_QP_DEPTH_MULTIPLIER, and are out of scope for the ISSUE-1
+        // admission check -- capacityUnits is unused on this path (no
+        // IbCastTryJoinSharedQp guard), so INT_MAX just satisfies the
+        // signature without implying a real limit.
         IbCastRegisterSharedQp(&flushKey, rComm->devs[i].gpuFlush.qp.qp,
-            rComm->devs[i].base.cq, rComm->devs[i].base.ibDevN, i, 1);
+            rComm->devs[i].base.cq, rComm->devs[i].base.ibDevN, i, 1, INT_MAX);
         INFO(NCCL_NET, "NET/IB: %s: PRIMARY recv registered flush QP qpn=%u dev=%d group=%d commId=%u",
              __func__, rComm->devs[i].gpuFlush.qp.qp->qp_num, i,
              rComm->base.sharedGroupIdx, rComm->base.commId);

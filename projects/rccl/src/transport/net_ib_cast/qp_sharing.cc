@@ -63,7 +63,7 @@ struct IbCastSharedQp* IbCastFindSharedQpByQpn(uint32_t qpn, bool isSend) {
 
 struct IbCastSharedQp* IbCastRegisterSharedQp(const IbCastSharedQpKey* key,
     struct ibv_qp* qp, struct ibv_cq* primaryCq,
-    int primaryIbDevN, int devIndex, int initialRefcount) {
+    int primaryIbDevN, int devIndex, int initialRefcount, int capacityUnits) {
 
     std::lock_guard<std::mutex> lock(g_IbCastSharedQpMutex);
     int idx;
@@ -86,7 +86,22 @@ struct IbCastSharedQp* IbCastRegisterSharedQp(const IbCastSharedQpKey* key,
     entry->cqRefcount = 0;
     entry->used = true;
     entry->ctsQpSlot = IBCAST_CTS_QP_SLOT_INVALID;
+    entry->capacityUnits = capacityUnits;
     return entry;
+}
+
+bool IbCastTryJoinSharedQp(struct IbCastSharedQp* slot) {
+    if (slot == NULL) return false;
+    std::lock_guard<std::mutex> lock(g_IbCastSharedQpMutex);
+    if (slot->refcount >= slot->capacityUnits) return false;
+    slot->refcount++;
+    return true;
+}
+
+void IbCastLeaveSharedQp(struct IbCastSharedQp* slot) {
+    if (slot == NULL) return;
+    std::lock_guard<std::mutex> lock(g_IbCastSharedQpMutex);
+    slot->refcount--;
 }
 
 void IbCastUnregisterSharedQpLocked(struct IbCastSharedQp* entry) {

@@ -51,6 +51,9 @@ struct IbCastSharedQp {
     int      cqRefcount;                   // comms using this group's CQs (tracked on qpIdx==0 only)
     bool     used;                         // slot in use
     int8_t   ctsQpSlot;                    // CTS signaling slot from primary
+    int      capacityUnits;                // depth multiplier the primary sized this QP's WR
+                                            // queue for -- refcount must stay below this or the
+                                            // physical QP's fixed WR budget overflows (ISSUE-1)
 };
 
 // Global comm table for completion routing (commId -> comm pointer)
@@ -83,10 +86,23 @@ struct IbCastSharedQp* IbCastFindSharedQp(const IbCastSharedQpKey* key);
 // Find a shared QP by QP number and direction (for teardown)
 struct IbCastSharedQp* IbCastFindSharedQpByQpn(uint32_t qpn, bool isSend);
 
-// Register a new shared QP in the pool
+// Register a new shared QP in the pool. capacityUnits is the depth multiplier
+// the primary sized this QP's WR queues for -- the max number of uniform-WR-
+// demand comms (this primary plus secondaries) it can safely hold.
 struct IbCastSharedQp* IbCastRegisterSharedQp(const IbCastSharedQpKey* key,
     struct ibv_qp* qp, struct ibv_cq* primaryCq,
-    int primaryIbDevN, int devIndex, int initialRefcount);
+    int primaryIbDevN, int devIndex, int initialRefcount, int capacityUnits);
+
+// Attempt to join an existing shared QP as a secondary. Atomically checks
+// refcount against capacityUnits and increments on success -- self-locking,
+// closes the TOCTOU a bare refcount++ would have on this check (CR-1).
+// Returns false (no state change) if the slot is already at capacity.
+bool IbCastTryJoinSharedQp(struct IbCastSharedQp* slot);
+
+// Undo a successful IbCastTryJoinSharedQp (decrement refcount) when a later
+// qpIdx in the same join loop fails and the whole comm falls back to
+// unshared. Self-locking.
+void IbCastLeaveSharedQp(struct IbCastSharedQp* slot);
 
 // Undo a registration -- either a partial registration attempt being rolled
 // back (a later qpIdx in the same group failed to register), or a slot whose

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <vector>
 #include <algorithm>
+#include <limits>
 
 #ifdef MPI_TESTS_ENABLED
 
@@ -78,12 +79,30 @@ public:
 
     // Model the next successful connect(). Call this immediately before the
     // real connection is established, in the same order the test issues them.
-    Placement AssignOnCreate() {
+    //
+    // capacityUnits mirrors the admission check the transport performs on
+    // join (ISSUE-1, connect.cc IbCastTryJoinSharedQp): a group's PRIMARY
+    // sizes its physical QP's WR queues for exactly this many uniform-demand
+    // comms, and any comm that would land in an already-full group instead
+    // falls back to an independent, unshared connection. Defaults to
+    // unlimited for callers that don't care (or are structurally guaranteed
+    // never to hit it).
+    Placement AssignOnCreate(int capacityUnits = std::numeric_limits<int>::max()) {
         Placement p;
-        p.group   = TotalRefs() % ngroups_;
-        p.primary = (loads_[p.group] == 0);
-        loads_[p.group]++;
-        peakLoad_ = std::max(peakLoad_, loads_[p.group]);
+        const int group = TotalRefs() % ngroups_;
+        if (loads_[group] >= capacityUnits) {
+            // Capacity-limited fallback: matches ncclIbQpSharingState's
+            // sharedGroupIdx=-1/commId=0 shape for a comm sharing is
+            // disabled for entirely -- group=-1 signals "not in the model's
+            // shared-pool bookkeeping at all".
+            p.group   = -1;
+            p.primary = false;
+            return p;
+        }
+        p.group   = group;
+        p.primary = (loads_[group] == 0);
+        loads_[group]++;
+        peakLoad_ = std::max(peakLoad_, loads_[group]);
         return p;
     }
 
