@@ -102,6 +102,12 @@ ncclResult_t IbCastInitCommDevBase(int ibDevN, struct ncclIbNetCommDevBase* base
     base->pd = ibDev->pd;
   }
 
+  if (ibDev->maxCqe > 0 && cqSize > ibDev->maxCqe) {
+    WARN("NET/IB: %s: requested CQ size %d exceeds device %s max_cqe %d, clamping",
+         __func__, cqSize, ibDev->devName, ibDev->maxCqe);
+    cqSize = ibDev->maxCqe;
+  }
+
   NCCLCHECK(wrap_ibv_create_cq(&base->cq, ibDev->context, cqSize, cq_context, NULL, 0));
 
   return ncclSuccess;
